@@ -1,5 +1,5 @@
 # 通过第三方柏拉图api调用 Banana的api使用
-注册地址 [柏拉图1](https://api.bltcy.ai/register?aff=3hiF)，注册地址 [柏拉图2](https://api.bltcy.ai/register?aff=cKgq)
+注册地址 [柏拉图1]( https://api.bltcy.ai/register?aff=dcc39044557)
 # 原先bnn涨价原因
 因为nano-banana涨价到0.08一次毫无性价比，上了自定义模型建议全部换成gemini-2.5-flash-image-preview、gemini-2.5-flash-image。
 测试下来效果是一样的
