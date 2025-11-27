@@ -34,7 +34,7 @@ PRESET_MODELS = [
     "astrbot_plugin_shoubanhua",
     "shskjw",
     "Google Gemini 手办化/图生图插件",
-    "1.5.11",
+    "1.6.0",
     "https://github.com/shkjw/astrbot_plugin_shoubanhua",
 )
 class FigurineProPlugin(Star):
@@ -1151,3 +1151,4 @@ class FigurineProPlugin(Star):
         if self.iwf:
             await self.iwf.terminate()
         logger.info("[FigurinePro] 插件已终止")
+
