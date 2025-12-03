@@ -62,7 +62,7 @@
     "power_model_trigger_mode": {
         "description": "【高级】触发词位置",
         "type": "string",
-        "hint": "选择触发词是前缀还是后缀。前缀示例: pro手办化，后缀示例: 手办化pro。",
+        "hint": "选择触发词是前缀还是后缀。前缀示例: pro手办化 或 pro 手办化；后缀示例: 手办化pro 或 手办化 pro。",
         "default": "suffix",
         "options": [
             "prefix",

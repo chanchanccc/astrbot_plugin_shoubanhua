@@ -620,14 +620,17 @@ class FigurineProPlugin(Star):
         if not tokens:
             return
 
-        raw_cmd_token = tokens[0].strip()
-        command_token = raw_cmd_token
+        def _normalize_token(token: str) -> Tuple[str, Optional[int]]:
+            token = token.strip()
+            match = re.search(r"[\(（](\d+)[\)）]$", token)
+            if match:
+                idx = int(match.group(1))
+                return token[:match.start()].strip(), idx
+            return token, None
 
-        suffix_match = re.search(r"[\(（](\d+)[\)）]$", command_token)
-        temp_model_idx = None
-        if suffix_match:
-            temp_model_idx = int(suffix_match.group(1))
-            command_token = command_token[:suffix_match.start()].strip()
+        raw_cmd_token = tokens[0].strip()
+        command_token, temp_model_idx = _normalize_token(raw_cmd_token)
+        consumed_tokens = 1
 
         cmd = command_token
         power_mode_requested = False
@@ -638,6 +641,22 @@ class FigurineProPlugin(Star):
                 power_mode_requested = True
             elif triggered and not stripped_cmd:
                 power_mode_requested = False
+
+        if not power_mode_requested and self.conf.get("enable_power_model", False):
+            keyword = (self.conf.get("power_model_keyword") or "").strip()
+            trigger_mode = (self.conf.get("power_model_trigger_mode", "suffix") or "suffix").lower()
+            if keyword:
+                keyword_lower = keyword.lower()
+                if trigger_mode == "prefix":
+                    if len(tokens) >= 2 and tokens[0].lower() == keyword_lower:
+                        command_token, temp_model_idx = _normalize_token(tokens[1])
+                        cmd = command_token
+                        consumed_tokens = 2
+                        power_mode_requested = True
+                else:
+                    if len(tokens) >= 2 and tokens[1].lower() == keyword_lower:
+                        consumed_tokens = 2
+                        power_mode_requested = True
 
         if not cmd:
             return
@@ -655,7 +674,8 @@ class FigurineProPlugin(Star):
         is_bnn = False
 
         if cmd == bnn_command:
-            user_prompt = text.removeprefix(raw_cmd_token).strip()
+            remaining_tokens = tokens[consumed_tokens:]
+            user_prompt = " ".join(remaining_tokens).strip()
             is_bnn = True
             if not user_prompt:
                 return
