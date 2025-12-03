@@ -56,24 +56,20 @@
     "power_model_keyword": {
         "description": "【高级】强力模式触发词",
         "type": "string",
-        "hint": "填写一个触发词（例如 pro），用户在命令前或后添加该词即可启用强力模型。",
+        "hint": "填写一个触发词（例如 pro），使用格式：指令 + 空格 + 触发词 + 空格 + 提示词。例如：手办化 pro [图片]，文生图 pro 描述。",
         "default": ""
-    },
-    "power_model_trigger_mode": {
-        "description": "【高级】触发词位置",
-        "type": "string",
-        "hint": "选择触发词是前缀还是后缀。前缀示例: pro手办化 或 pro 手办化；后缀示例: 手办化pro 或 手办化 pro。",
-        "default": "suffix",
-        "options": [
-            "prefix",
-            "suffix"
-        ]
     },
     "power_model_id": {
         "description": "【高级】强力模型 ID",
         "type": "string",
         "hint": "启用强力模式后实际调用的模型名称（必须填写）。",
         "default": ""
+    },
+    "power_model_tip_enabled": {
+        "description": "【高级】提示强力模式格式",
+        "type": "bool",
+        "hint": "开启后，在回复中提醒用户可通过“指令 + 触发词 + 提示词”格式（如：手办化 pro [图片] / 文生图 pro 描述）消耗强力模式所需次数调用更强模型。",
+        "default": false
     },
     "power_model_extra_cost": {
         "description": "【高级】强力模式额外扣次数",

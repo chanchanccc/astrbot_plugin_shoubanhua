@@ -394,35 +394,6 @@ class FigurineProPlugin(Star):
 
         return msg
 
-    def _strip_power_keyword(self, token: str) -> Tuple[str, bool]:
-        """根据配置尝试移除强力触发词"""
-        if not token:
-            return token, False
-
-        if not self.conf.get("enable_power_model", False):
-            return token, False
-
-        keyword = (self.conf.get("power_model_keyword") or "").strip()
-        if not keyword:
-            return token, False
-
-        keyword_len = len(keyword)
-        if keyword_len == 0 or keyword_len > len(token):
-            return token, False
-
-        trigger_mode = (self.conf.get("power_model_trigger_mode", "suffix") or "suffix").lower()
-        token_lower = token.lower()
-        keyword_lower = keyword.lower()
-
-        if trigger_mode == "prefix":
-            if token_lower.startswith(keyword_lower):
-                return token[keyword_len:].strip(), True
-        else:
-            if token_lower.endswith(keyword_lower):
-                return token[:-keyword_len].strip(), True
-
-        return token, False
-
     def _get_required_invocation_cost(self, use_power_mode: bool) -> int:
         """计算单次调用需要扣除的次数"""
         base_cost = 1
@@ -434,6 +405,20 @@ class FigurineProPlugin(Star):
                 extra = 1
             base_cost += max(0, extra)
         return max(1, base_cost)
+
+    def _get_power_mode_hint(self, command_hint: str) -> Optional[str]:
+        """生成强力模式使用提示"""
+        if not self.conf.get("power_model_tip_enabled", False):
+            return None
+        if not self.conf.get("enable_power_model", False):
+            return None
+
+        keyword = (self.conf.get("power_model_keyword") or "").strip()
+        if not keyword:
+            return None
+
+        total_cost = self._get_required_invocation_cost(True)
+        return f"💡 输入 \"{command_hint} {keyword} ...\" 可消耗 {total_cost} 次额度调用强力模型。"
 
     async def _call_api(self, image_bytes_list: List[bytes], prompt: str,
                         override_model: str | None = None) -> bytes | str:
@@ -633,33 +618,17 @@ class FigurineProPlugin(Star):
         consumed_tokens = 1
 
         cmd = command_token
-        power_mode_requested = False
-        if cmd:
-            stripped_cmd, triggered = self._strip_power_keyword(cmd)
-            if triggered and stripped_cmd:
-                cmd = stripped_cmd
-                power_mode_requested = True
-            elif triggered and not stripped_cmd:
-                power_mode_requested = False
-
-        if not power_mode_requested and self.conf.get("enable_power_model", False):
-            keyword = (self.conf.get("power_model_keyword") or "").strip()
-            trigger_mode = (self.conf.get("power_model_trigger_mode", "suffix") or "suffix").lower()
-            if keyword:
-                keyword_lower = keyword.lower()
-                if trigger_mode == "prefix":
-                    if len(tokens) >= 2 and tokens[0].lower() == keyword_lower:
-                        command_token, temp_model_idx = _normalize_token(tokens[1])
-                        cmd = command_token
-                        consumed_tokens = 2
-                        power_mode_requested = True
-                else:
-                    if len(tokens) >= 2 and tokens[1].lower() == keyword_lower:
-                        consumed_tokens = 2
-                        power_mode_requested = True
-
         if not cmd:
             return
+
+        raw_power_keyword = (self.conf.get("power_model_keyword") or "").strip()
+        keyword_lower = raw_power_keyword.lower()
+        power_mode_requested = False
+        if keyword_lower and len(tokens) > consumed_tokens:
+            next_token = tokens[consumed_tokens].strip().lower()
+            if next_token == keyword_lower:
+                power_mode_requested = True
+                consumed_tokens += 1
 
         power_model_name = (self.conf.get("power_model_id") or "").strip()
         use_power_model = False
@@ -807,7 +776,12 @@ class FigurineProPlugin(Star):
         model_in_use = (override_model_name or base_model_name).strip() or base_model_name
         show_model_info = self.conf.get("show_model_info", False)
 
-        yield event.plain_result(f"🎨 收到请求，正在生成 [{display_label}]...")
+        info_msg = f"🎨 收到请求，正在生成 [{display_label}]..."
+        if not use_power_model:
+            if hint := self._get_power_mode_hint(cmd):
+                info_msg += f"\n{hint}"
+
+        yield event.plain_result(info_msg)
 
         # --- 扣费执行 ---
         if deduction_source == 'group' and group_id:
@@ -874,28 +848,19 @@ class FigurineProPlugin(Star):
         cmd_name = "文生图"
         override_model_name = None
 
-        # --- 提取命令前后文本，用于解析强力模式 ---
         cmd_pos = raw_cmd.find(cmd_name)
-        before_cmd = raw_cmd[:cmd_pos].strip() if cmd_pos != -1 else ""
         prompt = raw_cmd[cmd_pos + len(cmd_name):].strip() if cmd_pos != -1 else raw_cmd
 
-        enable_power = self.conf.get("enable_power_model", False)
         power_model_name = (self.conf.get("power_model_id") or "").strip()
+        keyword = (self.conf.get("power_model_keyword") or "").strip()
+        keyword_lower = keyword.lower()
         power_mode_requested = False
 
-        if enable_power:
-            keyword = (self.conf.get("power_model_keyword") or "").strip()
-            trigger_mode = (self.conf.get("power_model_trigger_mode", "suffix") or "suffix").lower()
-            if keyword:
-                keyword_lower = keyword.lower()
-                if trigger_mode == "prefix":
-                    if before_cmd.lower() == keyword_lower:
-                        power_mode_requested = True
-                else:
-                    prompt_lower = prompt.lower()
-                    if prompt_lower.startswith(keyword_lower):
-                        power_mode_requested = True
-                        prompt = prompt[len(keyword):].lstrip()
+        if self.conf.get("enable_power_model", False) and keyword_lower:
+            prompt_tokens = prompt.split()
+            if prompt_tokens and prompt_tokens[0].lower() == keyword_lower:
+                power_mode_requested = True
+                prompt = " ".join(prompt_tokens[1:]).strip()
 
         if power_mode_requested and not power_model_name:
             yield event.plain_result("⚠️ 强力模式触发失败：请先在管理面板配置强力模型ID。")
@@ -952,6 +917,9 @@ class FigurineProPlugin(Star):
         info_str = f"🎨 收到文生图请求，正在生成 [{display_prompt}]"
         if override_model_name:
             info_str += f" (模型: {override_model_name})"
+        if not power_mode_requested:
+            if hint := self._get_power_mode_hint(cmd_name):
+                info_str += f"\n{hint}"
         yield event.plain_result(info_str)
 
         base_model_name = (self.conf.get("model", "nano-banana") or "nano-banana").strip() or "nano-banana"
