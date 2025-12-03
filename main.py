@@ -373,11 +373,23 @@ class FigurineProPlugin(Star):
 
         return None
 
+    def _build_limit_exhausted_message(self, group_id: Optional[str]) -> str:
+        """构造次数耗尽时的提示文案"""
+        if group_id and self.conf.get("enable_group_limit", False):
+            msg = "❌ 本群或您的使用次数已用尽 (优先扣除群次数)。"
+        else:
+            msg = "❌ 您的使用次数已用完。"
+
+        if self.conf.get("enable_checkin", False) and self.conf.get("enable_user_limit", True):
+            msg += "\n📅 发送 \"手办化签到\" 指令（请按当前命令前缀或唤醒方式触发）可补充个人次数。"
+
+        return msg
+
     async def _call_api(self, image_bytes_list: List[bytes], prompt: str,
                         override_model: str | None = None) -> bytes | str:
-        
+
         api_mode = self.conf.get("api_mode", "generic")
-        
+
         if api_mode == "gemini_official":
             base_url = self.conf.get("gemini_api_url", "https://generativelanguage.googleapis.com")
         else:
@@ -654,12 +666,7 @@ class FigurineProPlugin(Star):
                 if not self.conf.get("enable_group_limit", False) and not self.conf.get("enable_user_limit", True):
                     deduction_source = 'free'
                 else:
-                    msg = "❌ 次数不足。"
-                    if group_id and self.conf.get("enable_group_limit", False):
-                         msg = "❌ 本群或您的使用次数已用尽 (优先扣除群次数)。"
-                    else:
-                         msg = "❌ 您的使用次数已用完。"
-                    yield event.plain_result(msg)
+                    yield event.plain_result(self._build_limit_exhausted_message(group_id))
                     return
 
         # --- 图片获取 ---
@@ -787,7 +794,7 @@ class FigurineProPlugin(Star):
                 if not self.conf.get("enable_group_limit", False) and not self.conf.get("enable_user_limit", True):
                     deduction_source = 'free'
                 else:
-                    yield event.plain_result("❌ 您的使用次数已用完。")
+                    yield event.plain_result(self._build_limit_exhausted_message(group_id))
                     return
 
         info_str = f"🎨 收到文生图请求，正在生成 [{prompt[:10]}...]"
