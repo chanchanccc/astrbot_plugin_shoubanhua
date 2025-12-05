@@ -19,22 +19,12 @@ from astrbot.core import AstrBotConfig
 from astrbot.core.message.components import At, Image, Reply, Plain, Node, Nodes
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
-PRESET_MODELS = [
-    "nano-banana",
-    "nano-banana-2-4k",
-    "nano-banana-2-2k",
-    "gemini-3-pro-image-preview",
-    "gemini-2.5-flash-image",
-    "nano-banana-hd",
-    "gemini-2.5-flash-image-preview"
-]
-
 
 @register(
     "astrbot_plugin_shoubanhua",
     "shskjw",
     "Google Gemini 手办化/图生图插件",
-    "1.6.3",
+    "1.6.8",
     "https://github.com/shkjw/astrbot_plugin_shoubanhua",
 )
 class FigurineProPlugin(Star):
@@ -133,13 +123,7 @@ class FigurineProPlugin(Star):
                         img_bytes_list.append(avatar)
                 return img_bytes_list
 
-            if avatar := await self._get_avatar(event.get_sender_id()):
-                img_bytes_list.append(avatar)
-
             return img_bytes_list
-
-        async def terminate(self):
-            pass
 
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -182,12 +166,28 @@ class FigurineProPlugin(Star):
         
         g_keys = self.conf.get("generic_api_keys", [])
         o_keys = self.conf.get("gemini_api_keys", [])
-        if not g_keys and not o_keys and not self.conf.get("custom_model_1_key"):
+        
+        if not g_keys and not o_keys:
              logger.warning("FigurinePro: 未配置任何 API Key")
 
     async def _load_prompt_map(self):
         self.prompt_map.clear()
+        
+        # 1. 内置基础映射 (硬编码的指令)
+        base_cmd_map = {
+            "手办化": "figurine_1", "手办化2": "figurine_2", "手办化3": "figurine_3",
+            "手办化4": "figurine_4", "手办化5": "figurine_5", "手办化6": "figurine_6",
+            "Q版化": "q_version",
+            "痛屋化": "pain_room_1", "痛屋化2": "pain_room_2",
+            "痛车化": "pain_car",
+            "cos化": "cos", "cos自拍": "cos_selfie",
+            "孤独的我": "clown",
+            "第三视角": "view_3", "鬼图": "ghost", "第一视角": "view_1"
+        }
+        for k in base_cmd_map.keys():
+            self.prompt_map[k] = "[内置预设]"
 
+        # 2. 从配置的 prompts 加载
         prompts_cfg = self.conf.get("prompts", {})
         if isinstance(prompts_cfg, dict):
             for k, v in prompts_cfg.items():
@@ -196,6 +196,7 @@ class FigurineProPlugin(Star):
                 elif isinstance(v, str):
                     self.prompt_map[k] = v
 
+        # 3. 从 prompt_list 加载
         prompt_list = self.conf.get("prompt_list", [])
         if isinstance(prompt_list, list):
             for item in prompt_list:
@@ -204,23 +205,22 @@ class FigurineProPlugin(Star):
                     self.prompt_map[k.strip()] = v.strip()
 
     def _get_all_models(self) -> List[str]:
-        models = list(PRESET_MODELS)
-
-        c1 = self.conf.get("custom_model_1", "").strip()
-        c2 = self.conf.get("custom_model_2", "").strip()
-
-        if c1:
-            models.append(c1)
-        if c2:
-            models.append(c2)
-
+        """从配置的 model_list 中获取所有 model ID (纯字符串列表)"""
+        raw_list = self.conf.get("model_list", [])
+        models = []
+        # 兼容处理：确保返回的是字符串列表
+        for item in raw_list:
+            if isinstance(item, str):
+                models.append(item.strip())
+            elif isinstance(item, dict) and "id" in item:
+                # 兼容旧配置
+                models.append(item["id"])
         return models
 
     def is_global_admin(self, event: AstrMessageEvent) -> bool:
         return event.get_sender_id() in self.context.get_config().get("admins_id", [])
 
     def _norm_id(self, raw_id: Any) -> str:
-        """标准化 ID 为去除空白的字符串"""
         if raw_id is None:
             return ""
         return str(raw_id).strip()
@@ -256,7 +256,7 @@ class FigurineProPlugin(Star):
         except:
             pass
 
-        yield event.plain_result(f"✅ API 模式已切换为: **{target_mode}**\n注意：Key管理指令现在将操作 {target_mode} 的Key池。")
+        yield event.plain_result(f"✅ API 模式已切换为: **{target_mode}**")
 
     @filter.command("切换模型", aliases={"SwitchModel", "模型列表"}, prefix_optional=True)
     async def on_switch_model(self, event: AstrMessageEvent):
@@ -267,6 +267,7 @@ class FigurineProPlugin(Star):
         if len(parts) == 1:
             current_model = self.conf.get("model", "nano-banana")
             current_api_mode = self.conf.get("api_mode", "generic")
+            resolution = self.conf.get("image_resolution", "1K")
 
             msg = "📋 **可用模型列表**:\n"
             msg += "------------------\n"
@@ -274,12 +275,11 @@ class FigurineProPlugin(Star):
             for idx, model_name in enumerate(all_models):
                 seq_num = idx + 1
                 status = "✅ (当前)" if model_name == current_model else ""
-                is_custom = idx >= len(PRESET_MODELS)
-                type_mark = " [自]" if is_custom else ""
-                msg += f"{seq_num}. {model_name}{type_mark} {status}\n"
+                msg += f"{seq_num}. {model_name} {status}\n"
 
             msg += "------------------\n"
             msg += f"📡 **当前API模式**: {current_api_mode}\n"
+            msg += f"🖥️ **画质设置**: {resolution}\n"
             msg += "------------------\n"
             msg += "📝 **指令**:\n"
             msg += "1. `#切换模型 <序号>`\n"
@@ -329,7 +329,20 @@ class FigurineProPlugin(Star):
                 return key
 
     def _extract_image_url_from_response(self, data: Dict[str, Any]) -> str | None:
-        # 1. Google Gemini Official Structure
+        # 1. 优先检查 content 文本中是否包含 Markdown 格式的 Base64 图片
+        # 常见于 nano-banana 等逆向模型，格式: ![image](data:image/png;base64,...)
+        try:
+            if "choices" in data:
+                content = data["choices"][0]["message"]["content"]
+                # 匹配 data:image/...;base64,......
+                # 使用非贪婪匹配或精确字符集以避免匹配过长
+                match = re.search(r'(data:image\/[a-zA-Z]+;base64,[a-zA-Z0-9+/=]+)', content)
+                if match:
+                    return match.group(1)
+        except:
+            pass
+
+        # 2. Google Gemini Official Structure
         try:
             if "candidates" in data:
                 parts = data["candidates"][0]["content"]["parts"]
@@ -337,31 +350,31 @@ class FigurineProPlugin(Star):
                     if "inlineData" in p:
                         return f"data:{p['inlineData']['mimeType']};base64,{p['inlineData']['data']}"
                     if "text" in p:
+                        # 尝试从文本中提取 http 链接
                         match = re.search(r'https?://[^\s<>")\]]+', p["text"])
                         if match:
                             return match.group(0).rstrip(")>,'\"")
         except:
             pass
 
-        # 2. OpenAI-style Image Generation Structure (DALL-E format) - [新增修复]
+        # 3. OpenAI-style Image Generation Structure (DALL-E format)
         try:
             if "data" in data and isinstance(data["data"], list) and len(data["data"]) > 0:
                 item = data["data"][0]
                 if "b64_json" in item:
-                    # 返回 Data URI 格式，以便 _call_api 识别为 base64
                     return f"data:image/png;base64,{item['b64_json']}"
                 if "url" in item:
                     return item["url"]
         except:
             pass
 
-        # 3. OpenAI-style Chat Completion Structure (Custom providers)
+        # 4. OpenAI-style Chat Completion Structure (Custom providers image_url)
         try:
             return data["choices"][0]["message"]["images"][0]["image_url"]["url"]
         except:
             pass
 
-        # 4. OpenAI-style Chat Completion (URL in content text)
+        # 5. OpenAI-style Chat Completion (Raw HTTP URL in content text)
         try:
             if "choices" in data:
                 content = data["choices"][0]["message"]["content"]
@@ -379,7 +392,6 @@ class FigurineProPlugin(Star):
         use_power_mode: bool = False,
         required_cost: int = 1,
     ) -> str:
-        """构造次数耗尽时的提示文案"""
         if group_id and self.conf.get("enable_group_limit", False):
             msg = "❌ 本群或您的使用次数已用尽 (优先扣除群次数)。"
         else:
@@ -395,7 +407,6 @@ class FigurineProPlugin(Star):
         return msg
 
     def _get_required_invocation_cost(self, use_power_mode: bool) -> int:
-        """计算单次调用需要扣除的次数"""
         base_cost = 1
         if use_power_mode and self.conf.get("enable_power_model", False):
             extra = self.conf.get("power_model_extra_cost", 1)
@@ -407,7 +418,6 @@ class FigurineProPlugin(Star):
         return max(1, base_cost)
 
     def _get_power_mode_hint(self, command_hint: str) -> Optional[str]:
-        """生成强力模式使用提示"""
         if not self.conf.get("power_model_tip_enabled", False):
             return None
         if not self.conf.get("enable_power_model", False):
@@ -434,24 +444,19 @@ class FigurineProPlugin(Star):
             return "API URL 未配置"
 
         model_name = override_model or self.conf.get("model", "nano-banana")
-
-        api_key = None
-        c1 = self.conf.get("custom_model_1", "").strip()
-        c2 = self.conf.get("custom_model_2", "").strip()
-
-        if c1 and model_name == c1:
-            api_key = self.conf.get("custom_model_1_key") or await self._get_pool_api_key(api_mode)
-        elif c2 and model_name == c2:
-            api_key = self.conf.get("custom_model_2_key") or await self._get_pool_api_key(api_mode)
-        else:
-            api_key = await self._get_pool_api_key(api_mode)
-
+        
+        api_key = await self._get_pool_api_key(api_mode)
         if not api_key:
-            return f"无可用 API Key (请检查 {api_mode} 模式的Key池配置)"
+            return f"无可用 API Key (请在 {api_mode} 池中添加Key)"
+
+        # --- 应用分辨率设置 ---
+        resolution_setting = self.conf.get("image_resolution", "1K")
+        if resolution_setting and resolution_setting != "1K":
+            prompt = f"{prompt}, (Best quality, {resolution_setting} Resolution, Highly detailed)"
 
         headers = {
             "Content-Type": "application/json",
-            "Connection": "close"
+            "Connection": "keep-alive"
         }
 
         payload = {}
@@ -498,24 +503,31 @@ class FigurineProPlugin(Star):
         else:
             headers["Authorization"] = f"Bearer {api_key}"
             
-            content = [{"type": "text", "text": prompt}]
-            for img in image_bytes_list:
-                b64 = base64.b64encode(img).decode("utf-8")
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64}"}
-                })
+            messages = []
+            # 优化 System Prompt，防止模型因为人设问题拒绝画图
+            messages.append({"role": "system", "content": "You are a creative AI artist capable of generating images."})
+
+            if len(image_bytes_list) > 0:
+                # 包含图片的 Vision 请求结构
+                user_content_list = [{"type": "text", "text": prompt}]
+                for img in image_bytes_list:
+                    b64 = base64.b64encode(img).decode("utf-8")
+                    user_content_list.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"}
+                    })
+                messages.append({"role": "user", "content": user_content_list})
+            else:
+                # 纯文本请求结构：直接发送字符串 content
+                # 这样可以兼容那些对 Vision 列表格式支持不佳的 API 网关或模型
+                messages.append({"role": "user", "content": prompt})
 
             use_stream = self.conf.get("use_stream", True)
             payload = {
                 "model": model_name,
-                "max_tokens": 1500,
+                "max_tokens": 4000, # 增加 max_tokens 以容纳可能的 Base64 图片返回
                 "stream": use_stream,
-                "tool_choice": "none",
-                "messages": [
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": content}
-                ]
+                "messages": messages
             }
 
         timeout = self.conf.get("timeout", 120)
@@ -537,23 +549,36 @@ class FigurineProPlugin(Star):
 
                     if api_mode == "generic" and payload.get("stream"):
                         full_content = ""
+                        buffer = b""
                         try:
-                            async for line in resp.content:
-                                line_str = line.decode('utf-8').strip()
-                                if not line_str or line_str.startswith(":"):
-                                    continue
-                                if line_str == "data: [DONE]":
-                                    break
-                                if line_str.startswith("data: "):
-                                    json_str = line_str[6:]
+                            # 修复流式 Chunk too big 问题：
+                            # 使用 iter_chunked 绕过 aiohttp 默认的单行长度限制
+                            async for chunk in resp.content.iter_chunked(4096):
+                                buffer += chunk
+                                while b'\n' in buffer:
                                     try:
-                                        chunk = json.loads(json_str)
-                                        if "choices" in chunk and len(chunk["choices"]) > 0:
-                                            delta = chunk["choices"][0].get("delta", {})
-                                            if "content" in delta:
-                                                full_content += delta["content"]
-                                    except json.JSONDecodeError:
-                                        continue
+                                        line_data, buffer = buffer.split(b'\n', 1)
+                                        line_str = line_data.decode('utf-8').strip()
+                                        
+                                        if not line_str or line_str.startswith(":"):
+                                            continue
+                                        if line_str == "data: [DONE]":
+                                            break
+                                        if line_str.startswith("data: "):
+                                            json_str = line_str[6:]
+                                            try:
+                                                chunk_json = json.loads(json_str)
+                                                if "choices" in chunk_json and len(chunk_json["choices"]) > 0:
+                                                    delta = chunk_json["choices"][0].get("delta", {})
+                                                    if "content" in delta:
+                                                        full_content += delta["content"]
+                                            except json.JSONDecodeError:
+                                                continue
+                                    except ValueError:
+                                        # 解码失败等情况，跳过当前行
+                                        break
+                            
+                            # 构造完整的响应对象，供后续提取图片使用
                             data = {
                                 "choices": [{
                                     "message": {
@@ -621,6 +646,7 @@ class FigurineProPlugin(Star):
         if not cmd:
             return
 
+        # 强力模式参数解析
         raw_power_keyword = (self.conf.get("power_model_keyword") or "").strip()
         keyword_lower = raw_power_keyword.lower()
         power_mode_requested = False
@@ -638,6 +664,7 @@ class FigurineProPlugin(Star):
                 return
             use_power_model = True
 
+        # 指令解析
         bnn_command = self.conf.get("extra_prefix", "bnn")
         user_prompt = ""
         is_bnn = False
@@ -646,13 +673,13 @@ class FigurineProPlugin(Star):
             remaining_tokens = tokens[consumed_tokens:]
             user_prompt = " ".join(remaining_tokens).strip()
             is_bnn = True
-            if not user_prompt:
-                return
 
         elif cmd in self.prompt_map:
-            user_prompt = self.prompt_map.get(cmd)
+            val = self.prompt_map.get(cmd)
+            if val and val != "[内置预设]":
+                 user_prompt = val
 
-        else:
+        if not user_prompt and not is_bnn:
             cmd_map = {
                 "手办化": "figurine_1", "手办化2": "figurine_2", "手办化3": "figurine_3",
                 "手办化4": "figurine_4", "手办化5": "figurine_5", "手办化6": "figurine_6",
@@ -669,20 +696,19 @@ class FigurineProPlugin(Star):
                 if key == "help":
                     yield self._get_help_result(event)
                     return
-                user_prompt = self.prompt_map.get(key)
-
-            if not user_prompt:
-                return
+                user_prompt = self.prompt_map.get(key) or self.prompt_map.get(cmd)
 
         if not user_prompt:
-            yield event.plain_result(f"❌ 指令 '{cmd}' 未配置提示词。")
-            return
+             if is_bnn:
+                 if not user_prompt and not power_mode_requested: 
+                     pass
+             else:
+                return # 不是已知指令，忽略
 
         # --- 权限与次数逻辑 ---
         sender_id = self._norm_id(event.get_sender_id())
         group_id = self._norm_id(event.get_group_id()) if event.get_group_id() else None
         
-        # 1. 黑名单检查
         user_blacklist = [self._norm_id(x) for x in (self.conf.get("user_blacklist") or [])]
         if sender_id in user_blacklist: return
         
@@ -690,7 +716,6 @@ class FigurineProPlugin(Star):
             group_blacklist = [self._norm_id(x) for x in (self.conf.get("group_blacklist") or [])]
             if group_id in group_blacklist: return
 
-        # 2. 白名单逻辑
         raw_g_whitelist = self.conf.get("group_whitelist") or []
         group_whitelist = [self._norm_id(x) for x in raw_g_whitelist]
         
@@ -704,56 +729,72 @@ class FigurineProPlugin(Star):
         if is_master:
             deduction_source = 'free'
         elif group_id and group_id in group_whitelist:
-            deduction_source = 'free' # 群白名单 -> 无限
+            deduction_source = 'free' 
         elif group_id and len(group_whitelist) > 0:
-            # 严格模式：不在白名单群 -> 禁止
             yield event.plain_result("❌ 本群未授权使用此功能。")
             return
         elif len(user_whitelist) > 0 and sender_id not in user_whitelist:
             return
 
         if deduction_source is None:
-            # 优先扣除群组
             if group_id and self.conf.get("enable_group_limit", False):
                 g_cnt = self._get_group_count(group_id)
                 if g_cnt >= required_cost:
                     deduction_source = 'group'
             
-            # 如果群组没次数（或未扣除群组），尝试扣除个人
             if deduction_source is None and self.conf.get("enable_user_limit", True):
                 u_cnt = self._get_user_count(sender_id)
                 if u_cnt >= required_cost:
                     deduction_source = 'user'
             
-            # 再次检查：是否两者都未开启限制？如果是，则免费
             if deduction_source is None:
                 if not self.conf.get("enable_group_limit", False) and not self.conf.get("enable_user_limit", True):
                     deduction_source = 'free'
                 else:
                     yield event.plain_result(
-                        self._build_limit_exhausted_message(group_id, use_power_mode, required_cost)
+                        self._build_limit_exhausted_message(group_id, use_power_model, required_cost)
                     )
                     return
 
-        # --- 图片获取 ---
-        if not self.iwf or not (img_bytes_list := await self.iwf.get_images(event)):
-            if not is_bnn:
-                yield event.plain_result("请发送或引用一张图片。")
-                return
-
+        # --- 图片获取 (融合逻辑) ---
         images_to_process = []
+        is_text_to_image = False
+        
+        if self.iwf:
+             img_bytes_list = await self.iwf.get_images(event)
+             
+             if not img_bytes_list:
+                 # 未检测到图片
+                 if is_bnn:
+                     # bnn 模式 + 无图 = 文生图
+                     if not user_prompt:
+                         yield event.plain_result(f"请在指令后添加描述。例如: #{bnn_command} 一个可爱的女孩")
+                         return
+                     is_text_to_image = True
+                     images_to_process = []
+                 else:
+                     # 手办化等预设模式 + 无图 = 尝试取头像 (兼容旧习惯)
+                     if avatar := await self.iwf._get_avatar(sender_id):
+                        img_bytes_list = [avatar]
+                     else:
+                        yield event.plain_result("请发送或引用一张图片。")
+                        return
+             
+             if not is_text_to_image and img_bytes_list:
+                images_to_process = img_bytes_list
+
         display_cmd = cmd
         if is_bnn:
             MAX_IMAGES = 5
-            if len(img_bytes_list) > MAX_IMAGES:
-                images_to_process = img_bytes_list[:MAX_IMAGES]
+            if len(images_to_process) > MAX_IMAGES:
+                images_to_process = images_to_process[:MAX_IMAGES]
                 yield event.plain_result(f"🎨 检测到 {len(img_bytes_list)} 张图片，已选取前 {MAX_IMAGES} 张…")
-            else:
-                images_to_process = img_bytes_list
+            
             display_cmd = user_prompt[:10] + '...' if len(user_prompt) > 10 else user_prompt
-        else:
-            images_to_process = [img_bytes_list[0]]
+        elif len(images_to_process) > 0:
+            images_to_process = [images_to_process[0]]
 
+        # 模型选择
         override_model_name = None
         all_models = self._get_all_models()
         if temp_model_idx is not None:
@@ -766,13 +807,14 @@ class FigurineProPlugin(Star):
             override_model_name = power_model_name
 
         display_label = display_cmd
-
         base_model_name = (self.conf.get("model", "nano-banana") or "nano-banana").strip() or "nano-banana"
         model_in_use = (override_model_name or base_model_name).strip() or base_model_name
         show_model_info = self.conf.get("show_model_info", False)
 
         mode_prefix = "增强" if use_power_model else ""
-        info_msg = f"🎨 收到{mode_prefix}请求，正在生成 [{display_label}]..."
+        action_type = "文生图" if is_text_to_image else "图生图"
+        
+        info_msg = f"🎨 收到{mode_prefix}{action_type}请求，正在生成 [{display_label}]..."
         yield event.plain_result(info_msg)
 
         # --- 扣费执行 ---
@@ -794,10 +836,8 @@ class FigurineProPlugin(Star):
             if deduction_source == 'free':
                 caption_parts.append("剩余: ∞")
             else:
-                # 无论扣除的是谁，只要开启了限制，就显示对应的剩余次数
                 if group_id and self.conf.get("enable_group_limit", False):
                     caption_parts.append(f"本群剩余: {self._get_group_count(group_id)}")
-                
                 if self.conf.get("enable_user_limit", True):
                     caption_parts.append(f"用户剩余: {self._get_user_count(sender_id)}")
 
@@ -890,7 +930,6 @@ class FigurineProPlugin(Star):
         sender_id = self._norm_id(event.get_sender_id())
         group_id = self._norm_id(event.get_group_id()) if event.get_group_id() else None
 
-        # --- 权限逻辑复用 ---
         use_power_model = power_mode_requested
         required_cost = self._get_required_invocation_cost(use_power_model)
 
@@ -966,36 +1005,6 @@ class FigurineProPlugin(Star):
 
         event.stop_event()
 
-    @filter.command("设置自定义key", aliases={"setk"}, prefix_optional=True)
-    async def set_custom_key(self, event: AstrMessageEvent):
-        if not self.is_global_admin(event):
-            return
-
-        parts = event.message_str.strip().split()
-        if len(parts) < 3:
-            yield event.plain_result("格式错误。用法: #设置自定义key <1或2> <key>")
-            return
-
-        idx = parts[1]
-        key_val = parts[2]
-        if idx == "1":
-            self.conf["custom_model_1_key"] = key_val
-            msg = "✅ 自定义模型1 的 Key 已更新。"
-        elif idx == "2":
-            self.conf["custom_model_2_key"] = key_val
-            msg = "✅ 自定义模型2 的 Key 已更新。"
-        else:
-            yield event.plain_result("❌ 仅支持设置 1 或 2。")
-            return
-
-        try:
-            if hasattr(self.conf, "save"):
-                self.conf.save()
-        except:
-            pass
-
-        yield event.plain_result(msg)
-
     @filter.command("lm添加", aliases={"lma"}, prefix_optional=True)
     async def add_lm_prompt(self, event: AstrMessageEvent):
         if not self.is_global_admin(event):
@@ -1058,6 +1067,44 @@ class FigurineProPlugin(Star):
             yield event.plain_result(f"🔍 关键词【{keyword}】的提示词：\n\n{prompt_content}")
         else:
             yield event.plain_result(f"❌ 未找到关键词【{keyword}】的预设。")
+
+    @filter.command("lm列表", aliases={"lmlist", "预设列表"}, prefix_optional=True)
+    async def on_get_preset_list(self, event: AstrMessageEvent):
+        """输出所有可用预设列表"""
+        if not self.prompt_map:
+            yield event.plain_result("⚠️ 当前没有可用的预设。")
+            return
+
+        # 整理预设
+        built_in = []
+        custom = []
+
+        for key, val in self.prompt_map.items():
+            if val == "[内置预设]":
+                built_in.append(key)
+            else:
+                custom.append(key)
+
+        built_in.sort()
+        custom.sort()
+
+        msg = "📜 **可用预设列表**\n"
+        msg += "==================\n"
+        
+        if built_in:
+            msg += "📌 **内置预设**:\n"
+            msg += "  " + "、".join(built_in) + "\n\n"
+        
+        if custom:
+            msg += "✨ **自定义预设**:\n"
+            msg += "  " + "、".join(custom) + "\n"
+        else:
+            msg += "✨ **自定义预设**: (无)\n"
+
+        msg += "==================\n"
+        msg += "使用方法: #预设名 [图片]"
+        
+        yield event.plain_result(msg)
 
     @filter.command("lm帮助", aliases={"lmh", "手办化帮助"}, prefix_optional=True)
     async def on_prompt_help(self, event: AstrMessageEvent):
