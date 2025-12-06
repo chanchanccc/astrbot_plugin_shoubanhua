@@ -24,7 +24,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
     "astrbot_plugin_shoubanhua",
     "shskjw",
     "支持第三方所有OpenAI绘图格式和原生Google Gemini 终极缝合怪，文生图/图生图插件",
-    "1.6.8",
+    "1.6.9",
     "https://github.com/shkjw/astrbot_plugin_shoubanhua",
 )
 class FigurineProPlugin(Star):
@@ -798,8 +798,6 @@ class FigurineProPlugin(Star):
                 yield event.plain_result(f"🎨 检测到 {len(img_bytes_list)} 张图片，已选取前 {MAX_IMAGES} 张…")
             
             display_cmd = user_prompt[:10] + '...' if len(user_prompt) > 10 else user_prompt
-        elif len(images_to_process) > 0:
-            images_to_process = [images_to_process[0]]
 
         # 模型选择
         override_model_name = None
@@ -1454,4 +1452,5 @@ class FigurineProPlugin(Star):
         if self.iwf:
             await self.iwf.terminate()
         logger.info("[FigurinePro] 插件已终止")
+
 
